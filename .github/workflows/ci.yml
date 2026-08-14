@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Electron runtime
+        run: pnpm ensure-electron
+
       - name: Run tests
         run: pnpm test
 

@@ -108,6 +108,9 @@ jobs:
       - name: Install desktop dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Electron runtime
+        run: pnpm ensure-electron
+
       - name: Test desktop shell
         run: pnpm test
 

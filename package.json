@@ -5,6 +5,7 @@
   "description": "A Windows desktop shell for DeepSeek Harness.",
   "author": "DeepSeek Harness Desktop contributors",
   "license": "MIT",
+  "packageManager": "pnpm@11.7.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/761244815/deepseek-harness-desktop.git"
@@ -14,6 +15,7 @@
   "main": "main.mjs",
   "scripts": {
     "generate-icon": "electron scripts/generate-icon.cjs",
+    "ensure-electron": "node node_modules/electron/install.js",
     "start": "electron .",
     "test": "node --test",
     "pack": "electron-builder --dir",
