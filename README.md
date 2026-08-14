@@ -34,6 +34,15 @@ pnpm dist
 
 The preview is unsigned, so Windows SmartScreen may warn on first launch.
 
+## Code signing policy
+
+The project has applied for free code signing provided by SignPath.io,
+certificate by SignPath Foundation. Releases remain explicitly marked as
+unsigned until the application is approved and signing is integrated.
+
+See the [code signing policy](CODE_SIGNING_POLICY.md) and
+[privacy policy](PRIVACY.md).
+
 ## Automated releases
 
 GitHub Actions checks the official Harness `master` branch every six hours. A
