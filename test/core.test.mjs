@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { resolvePnpmCommand } from '../lib/command.mjs'
+import { resolveHarnessLaunch, resolveNodeCommand, resolvePnpmCommand } from '../lib/command.mjs'
 import { extractHarnessUrl } from '../lib/harness-manager.mjs'
 import { shortCommit } from '../lib/updater.mjs'
 
@@ -30,4 +30,47 @@ test('resolvePnpmCommand reports a useful missing dependency error', () => {
     env: {},
     fileExists: () => false,
   }), /pnpm 11\.7\.0 or newer/)
+})
+
+test('resolveNodeCommand finds Node on the Windows PATH', () => {
+  const expected = 'F:\\nodejs\\node.exe'
+  assert.equal(resolveNodeCommand({
+    platform: 'win32',
+    env: { Path: 'C:\\Windows\\System32;F:\\nodejs' },
+    fileExists: candidate => candidate === expected,
+  }), expected)
+})
+
+test('resolveHarnessLaunch prefers the compiled CLI', () => {
+  const runtimePath = 'D:\\deepseek-harness'
+  const entrypoint = `${runtimePath}\\apps\\cli\\lib\\bin.js`
+  const node = 'F:\\nodejs\\node.exe'
+  const launch = resolveHarnessLaunch(runtimePath, {
+    platform: 'win32',
+    env: { Path: 'F:\\nodejs' },
+    fileExists: candidate => candidate === entrypoint || candidate === node,
+  })
+
+  assert.deepEqual(launch, {
+    command: node,
+    args: [entrypoint, 'web', '--host', '127.0.0.1', '--port', '0'],
+    shell: false,
+    mode: 'built',
+  })
+})
+
+test('resolveHarnessLaunch falls back to the source CLI when no build exists', () => {
+  const pnpm = 'C:\\Users\\demo\\AppData\\Roaming\\npm\\pnpm.cmd'
+  const launch = resolveHarnessLaunch('D:\\deepseek-harness', {
+    platform: 'win32',
+    env: { APPDATA: 'C:\\Users\\demo\\AppData\\Roaming' },
+    fileExists: candidate => candidate === pnpm,
+  })
+
+  assert.deepEqual(launch, {
+    command: pnpm,
+    args: ['dsh', 'web', '--host', '127.0.0.1', '--port', '0'],
+    shell: true,
+    mode: 'source',
+  })
 })
