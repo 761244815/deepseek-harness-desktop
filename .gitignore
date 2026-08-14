@@ -1,0 +1,6 @@
+node_modules/
+dist/
+shell-preview.png
+packaged-ready.png
+.env
+*.log

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepSeek Harness Desktop</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img src="../assets/favicon.svg" alt="">
+        <span>DeepSeek Harness</span>
+      </div>
+      <span class="desktop-label">DESKTOP PREVIEW</span>
+    </header>
+
+    <main>
+      <section class="status-band" aria-live="polite">
+        <div class="signal" id="signal"><span></span></div>
+        <div class="status-copy">
+          <p class="eyebrow" id="phase">STARTING</p>
+          <h1 id="title">正在准备运行环境</h1>
+          <p id="detail">D:\deepseek-harness</p>
+        </div>
+      </section>
+
+      <section class="operations">
+        <ol class="steps" id="steps">
+          <li data-step="checking"><span>01</span><strong>检查上游</strong><small>OFFICIAL MASTER</small></li>
+          <li data-step="updating"><span>02</span><strong>准备版本</strong><small>ISOLATED WORKTREE</small></li>
+          <li data-step="building"><span>03</span><strong>安装与编译</strong><small>VERIFIED BUILD</small></li>
+          <li data-step="starting"><span>04</span><strong>启动服务</strong><small>LOCAL LOOPBACK</small></li>
+        </ol>
+
+        <div class="log-panel">
+          <div class="panel-heading">
+            <span>活动记录</span>
+            <button id="openLogs" type="button">打开日志</button>
+          </div>
+          <pre id="logs">等待进程输出...</pre>
+        </div>
+      </section>
+
+      <footer>
+        <span id="timestamp">LOCAL RUNTIME</span>
+        <button id="retry" type="button" hidden>重试</button>
+      </footer>
+    </main>
+    <script src="renderer.js"></script>
+  </body>
+</html>
