@@ -3,6 +3,16 @@ name: Upstream release
 on:
   push:
     branches: [main]
+    paths:
+      - assets/**
+      - lib/**
+      - scripts/**
+      - shell/**
+      - main.mjs
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - preload.cjs
   workflow_dispatch:
   schedule:
     - cron: "17 */6 * * *"
@@ -146,7 +156,7 @@ jobs:
           "@ | Set-Content -Encoding utf8 release-notes.md
 
           $assets = Get-ChildItem dist -File | Where-Object {
-            $_.Extension -in ".exe", ".yml", ".blockmap"
+            $_.Extension -in ".exe", ".blockmap" -or $_.Name -eq "latest.yml"
           } | Select-Object -ExpandProperty FullName
           if (-not ($assets | Where-Object { $_ -like "*.exe" })) {
             throw "No Windows executable was produced"
