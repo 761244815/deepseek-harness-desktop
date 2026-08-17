@@ -4,22 +4,25 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { HarnessManager } from './lib/harness-manager.mjs'
-import { HarnessUpdater } from './lib/updater.mjs'
+import { HARNESS_PACKAGE, HarnessUpdater } from './lib/updater.mjs'
 
 const { autoUpdater: desktopAutoUpdater } = electronUpdater
 
 const appDir = fileURLToPath(new URL('.', import.meta.url))
-const defaultCheckout = process.env.DEEPSEEK_HARNESS_DIR || 'D:\\deepseek-harness'
+const fallbackCheckout = process.env.DEEPSEEK_HARNESS_DIR || 'D:\\deepseek-harness'
 let mainWindow
 let tray
 let manager
 let updater
 let busy = false
+let harnessUpdateBusy = false
+let harnessUpdateInitialTimer
+let harnessUpdateTimer
 let desktopUpdateTimer
 let currentStatus = {
   phase: 'idle',
   title: '准备启动',
-  detail: defaultCheckout,
+  detail: HARNESS_PACKAGE,
   logs: [],
 }
 
@@ -54,16 +57,22 @@ function activeState() {
   return updater.loadState()
 }
 
-async function startRuntime(runtimePath, commit = null) {
+async function startRuntime(runtimePath, version = null) {
   const url = await manager.start(runtimePath)
   const state = activeState()
-  updater.saveState({ ...state, activeRuntime: runtimePath, activeCommit: commit ?? state.activeCommit })
+  updater.saveState({
+    ...state,
+    activeRuntime: runtimePath,
+    activeVersion: version ?? updater.versionAt(runtimePath),
+    pendingRuntime: null,
+    pendingVersion: null,
+  })
   await mainWindow.loadURL(url)
   mainWindow.setTitle('DeepSeek Harness')
   await captureForQa('ready')
 }
 
-async function bootstrap({ forceCheck = false } = {}) {
+async function bootstrap({ runtimePath: requestedRuntime = null, runtimeVersion: requestedVersion = null } = {}) {
   if (busy) return
   busy = true
   await showShell()
@@ -72,33 +81,32 @@ async function bootstrap({ forceCheck = false } = {}) {
     return
   }
   const state = activeState()
-  let runtimePath = state.activeRuntime
-  let stagedCommit = null
+  let activeRuntime = existsSync(join(state.activeRuntime, 'package.json'))
+    ? state.activeRuntime
+    : null
+  let runtimePath = requestedRuntime ?? state.pendingRuntime ?? activeRuntime
+  let runtimeVersion = requestedVersion
+    ?? (runtimePath === state.pendingRuntime ? state.pendingVersion : state.activeVersion)
+  let started = false
 
   try {
-    if (!existsSync(join(runtimePath, 'package.json'))) runtimePath = defaultCheckout
-    if (state.autoUpdate || forceCheck) {
-      try {
-        const update = await updater.check(runtimePath)
-        if (update.available) {
-          if (state.autoUpdate || forceCheck) {
-            runtimePath = await updater.stage(update.remoteCommit)
-            stagedCommit = update.remoteCommit
-          }
-        } else {
-          publishStatus({ phase: 'current', title: '已是官方最新版本', detail: update.currentCommit.slice(0, 12) })
-        }
-      } catch (error) {
-        publishStatus({ phase: 'warning', title: '更新检查未完成', detail: error.message, log: error.message })
-      }
+    if (runtimePath === null) {
+      publishStatus({ phase: 'checking', title: '正在准备首次运行', detail: `${HARNESS_PACKAGE} (npm latest)` })
+      const initial = await updater.check(null)
+      runtimePath = await updater.stage(initial.latestVersion)
+      runtimeVersion = initial.latestVersion
+      activeRuntime = runtimePath
     }
-
     try {
-      await startRuntime(runtimePath, stagedCommit)
+      await startRuntime(runtimePath, runtimeVersion)
+      started = true
     } catch (error) {
-      if (runtimePath !== state.activeRuntime && existsSync(join(state.activeRuntime, 'package.json'))) {
+      if (runtimePath !== activeRuntime
+        && activeRuntime !== null
+        && existsSync(join(activeRuntime, 'package.json'))) {
         publishStatus({ phase: 'fallback', title: '新版本启动失败，正在恢复', detail: error.message, log: error.message })
-        await startRuntime(state.activeRuntime, state.activeCommit)
+        await startRuntime(activeRuntime, state.activeVersion)
+        started = true
       } else {
         throw error
       }
@@ -108,30 +116,103 @@ async function bootstrap({ forceCheck = false } = {}) {
   } finally {
     busy = false
   }
+  if (started) scheduleHarnessUpdateChecks()
 }
 
-async function checkForUpdatesInteractively() {
-  if (busy) return
-  const state = activeState()
-  try {
-    const update = await updater.check(state.activeRuntime)
-    if (!update.available) {
-      await dialog.showMessageBox(mainWindow, { type: 'info', title: '检查更新', message: '当前已经是官方最新版本。' })
-      return
+async function prepareHarnessUpdate({ interactive = false } = {}) {
+  if (harnessUpdateBusy) {
+    if (interactive) {
+      await dialog.showMessageBox(mainWindow, { type: 'info', title: 'Harness 更新', message: '更新任务正在进行。' })
     }
-    const answer = await dialog.showMessageBox(mainWindow, {
+    return
+  }
+  const state = activeState()
+  if (state.pendingRuntime && state.pendingVersion) {
+    if (!interactive) return
+    const pendingAnswer = await dialog.showMessageBox(mainWindow, {
       type: 'question',
-      buttons: ['更新并重启', '稍后'],
+      buttons: ['立即重启', '稍后'],
       defaultId: 0,
       cancelId: 1,
-      title: '发现 Harness 更新',
-      message: `发现新版本 ${update.remoteCommit.slice(0, 12)}`,
-      detail: '新版本会在独立目录中编译，成功后才切换。',
+      title: 'Harness 更新已就绪',
+      message: `正式版 ${state.pendingVersion} 已准备完成。`,
     })
-    if (answer.response === 0) await bootstrap({ forceCheck: true })
-  } catch (error) {
-    await dialog.showErrorBox('更新检查失败', error.message)
+    if (pendingAnswer.response === 0) {
+      await bootstrap({ runtimePath: state.pendingRuntime, runtimeVersion: state.pendingVersion })
+    }
+    return
   }
+
+  harnessUpdateBusy = true
+  try {
+    const currentVersion = state.activeVersion ?? updater.versionAt(state.activeRuntime)
+    const update = await updater.check(currentVersion)
+    if (!update.available) {
+      if (interactive) {
+        await dialog.showMessageBox(mainWindow, {
+          type: 'info',
+          title: 'Harness 更新',
+          message: `当前已经是 npm 正式版 ${update.latestVersion}。`,
+        })
+      }
+      return
+    }
+
+    if (interactive) {
+      const downloadAnswer = await dialog.showMessageBox(mainWindow, {
+        type: 'question',
+        buttons: ['下载并准备', '稍后'],
+        defaultId: 0,
+        cancelId: 1,
+        title: '发现 Harness 正式版更新',
+        message: `发现 npm 正式版 ${update.latestVersion}。`,
+        detail: '新版本会安装到独立目录，验证成功后才切换。',
+      })
+      if (downloadAnswer.response !== 0) return
+    }
+
+    const runtimePath = await updater.stage(update.latestVersion)
+    updater.saveState({
+      ...activeState(),
+      pendingRuntime: runtimePath,
+      pendingVersion: update.latestVersion,
+    })
+    updater.log(`Harness ${update.latestVersion} is ready and will be activated on the next start`)
+
+    if (interactive) {
+      const restartAnswer = await dialog.showMessageBox(mainWindow, {
+        type: 'question',
+        buttons: ['立即重启', '下次启动'],
+        defaultId: 0,
+        cancelId: 1,
+        title: 'Harness 更新已就绪',
+        message: `正式版 ${update.latestVersion} 已安装并验证。`,
+      })
+      if (restartAnswer.response === 0) {
+        await bootstrap({ runtimePath, runtimeVersion: update.latestVersion })
+      }
+    }
+  } catch (error) {
+    updater.log(`Harness update failed: ${error.message}`)
+    if (interactive) dialog.showErrorBox('Harness 更新失败', error.message)
+  } finally {
+    harnessUpdateBusy = false
+  }
+}
+
+function checkForUpdatesInteractively() {
+  return prepareHarnessUpdate({ interactive: true })
+}
+
+function scheduleHarnessUpdateChecks() {
+  if (harnessUpdateInitialTimer) clearTimeout(harnessUpdateInitialTimer)
+  if (harnessUpdateTimer) clearInterval(harnessUpdateTimer)
+  if (!activeState().autoUpdate) return
+
+  harnessUpdateInitialTimer = setTimeout(() => void prepareHarnessUpdate(), 10_000)
+  harnessUpdateInitialTimer.unref()
+  harnessUpdateTimer = setInterval(() => void prepareHarnessUpdate(), 6 * 60 * 60_000)
+  harnessUpdateTimer.unref()
 }
 
 async function checkDesktopUpdate({ interactive = false } = {}) {
@@ -202,15 +283,16 @@ function rebuildMenu() {
     {
       label: '更新',
       submenu: [
-        { label: '立即检查官方更新', click: () => void checkForUpdatesInteractively() },
+        { label: '立即检查 Harness 正式版更新', click: () => void checkForUpdatesInteractively() },
         { label: '检查桌面程序更新', click: () => void checkDesktopUpdate({ interactive: true }) },
         {
-          label: '启动时自动更新 Harness',
+          label: '后台自动更新 Harness',
           type: 'checkbox',
           checked: state.autoUpdate,
           click: item => {
             updater.saveState({ ...activeState(), autoUpdate: item.checked })
             rebuildMenu()
+            scheduleHarnessUpdateChecks()
           },
         },
       ],
@@ -281,7 +363,7 @@ else {
   app.whenReady().then(() => {
     app.setAppUserModelId('ai.deepseek.harness.desktop')
     const userData = app.getPath('userData')
-    updater = new HarnessUpdater({ checkoutPath: defaultCheckout, userDataPath: userData, onStatus: publishStatus })
+    updater = new HarnessUpdater({ fallbackRuntimePath: fallbackCheckout, userDataPath: userData, onStatus: publishStatus })
     manager = new HarnessManager({ logDir: join(userData, 'logs'), onStatus: publishStatus })
     rebuildMenu()
     createWindow()
@@ -295,6 +377,8 @@ ipcMain.handle('shell:retry', () => bootstrap())
 ipcMain.handle('shell:open-logs', () => shell.openPath(join(app.getPath('userData'), 'logs')))
 
 app.on('before-quit', event => {
+  if (harnessUpdateInitialTimer) clearTimeout(harnessUpdateInitialTimer)
+  if (harnessUpdateTimer) clearInterval(harnessUpdateTimer)
   if (desktopUpdateTimer) clearInterval(desktopUpdateTimer)
   if (!manager?.child) return
   event.preventDefault()

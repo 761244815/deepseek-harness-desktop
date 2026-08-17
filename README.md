@@ -5,14 +5,20 @@ Unofficial Windows desktop shell for
 
 ## Runtime
 
-- Default checkout: `D:\deepseek-harness`
-- Override: set `DEEPSEEK_HARNESS_DIR`
-- Required commands: `git`, `node`, and `pnpm`
-- State and staged runtimes: `%APPDATA%\deepseek-harness-desktop`
+- Official runtime package: `@deepseek-ai/dsh` from the npm `latest` tag
+- Required runtime: Node.js 22.19.0 or newer (including `node` and `npm`)
+- State and isolated runtimes: `%APPDATA%\deepseek-harness-desktop`
+- Legacy checkout fallback: `D:\deepseek-harness` (override with `DEEPSEEK_HARNESS_DIR`)
 
-The app starts Harness on an OS-selected loopback port. On startup it checks
-`origin/master`. A new commit is built in an isolated Git worktree and becomes
-active only after the process passes its HTTP health check.
+The app starts the last verified Harness runtime immediately on an OS-selected
+loopback port. It checks the npm `latest` tag in the background. A new official
+package is installed in an isolated directory and is activated on the next
+start only after installation verification. If the new runtime fails its HTTP
+health check, the app falls back to the previous runtime.
+
+Existing installations keep their source checkout as a migration fallback.
+After the first npm runtime is staged and activated, Git and pnpm are no longer
+needed for normal use.
 
 The packaged desktop app also checks this repository's latest GitHub Release.
 Desktop updates download in the background and are installed after confirmation
@@ -45,9 +51,8 @@ See the [code signing policy](CODE_SIGNING_POLICY.md) and
 
 ## Automated releases
 
-GitHub Actions checks the official Harness `master` branch every six hours. A
-new upstream commit is installed and built first; only a successful build can
-produce a new Windows release. Pushes to `main` also create a release for shell
-changes.
+GitHub Actions tests and publishes Windows packages when the desktop shell
+changes. Harness updates are delivered independently through the official npm
+`latest` tag, so an upstream source commit no longer triggers a desktop release.
 
 This project is community maintained and is not an official DeepSeek release.

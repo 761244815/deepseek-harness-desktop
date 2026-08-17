@@ -1,4 +1,4 @@
-name: Upstream release
+name: Desktop release
 
 on:
   push:
@@ -14,8 +14,6 @@ on:
       - pnpm-workspace.yaml
       - preload.cjs
   workflow_dispatch:
-  schedule:
-    - cron: "17 */6 * * *"
 
 permissions:
   contents: read
@@ -25,79 +23,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      commit: ${{ steps.upstream.outputs.commit }}
-      short: ${{ steps.upstream.outputs.short }}
-      should_release: ${{ steps.upstream.outputs.should_release }}
-    steps:
-      - name: Check official Harness revision
-        id: upstream
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $headers = @{
-            Authorization = "Bearer $env:GH_TOKEN"
-            Accept = "application/vnd.github+json"
-            "X-GitHub-Api-Version" = "2022-11-28"
-          }
-          $upstream = Invoke-RestMethod `
-            -Headers $headers `
-            -Uri "https://api.github.com/repos/deepseek-ai/deepseek-harness/commits/master"
-          $commit = $upstream.sha
-          $shouldRelease = "${{ github.event_name }}" -ne "schedule"
-
-          if (-not $shouldRelease) {
-            try {
-              $latest = Invoke-RestMethod `
-                -Headers $headers `
-                -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/latest"
-              $shouldRelease = -not $latest.body.Contains($commit)
-            } catch {
-              if ($_.Exception.Response.StatusCode.value__ -eq 404) {
-                $shouldRelease = $true
-              } else {
-                throw
-              }
-            }
-          }
-
-          "commit=$commit" >> $env:GITHUB_OUTPUT
-          "short=$($commit.Substring(0, 12))" >> $env:GITHUB_OUTPUT
-          "should_release=$($shouldRelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-
-  validate_upstream:
-    needs: prepare
-    if: needs.prepare.outputs.should_release == 'true'
-    runs-on: windows-latest
-    steps:
-      - name: Check out official Harness
-        uses: actions/checkout@v4
-        with:
-          repository: deepseek-ai/deepseek-harness
-          ref: ${{ needs.prepare.outputs.commit }}
-          persist-credentials: false
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.7.0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install official Harness dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build official Harness
-        run: pnpm run build
-
   release:
-    needs: [prepare, validate_upstream]
-    if: needs.prepare.outputs.should_release == 'true' && needs.validate_upstream.result == 'success'
     runs-on: windows-latest
     permissions:
       contents: write
@@ -124,17 +50,14 @@ jobs:
       - name: Test desktop shell
         run: pnpm test
 
+      - name: Validate official npm runtime
+        run: pnpm smoke:npm-runtime
+
       - name: Stamp release version
         shell: pwsh
         env:
-          RELEASE_VERSION: 0.1.${{ github.run_number }}
-          UPSTREAM_COMMIT: ${{ needs.prepare.outputs.commit }}
-        run: |
-          npm pkg set version="$env:RELEASE_VERSION"
-          @{
-            commit = $env:UPSTREAM_COMMIT
-            builtAt = (Get-Date).ToUniversalTime().ToString("o")
-          } | ConvertTo-Json | Set-Content -Encoding utf8 assets/upstream.json
+          RELEASE_VERSION: 0.2.${{ github.run_number }}
+        run: npm pkg set version="$env:RELEASE_VERSION"
 
       - name: Build Windows release
         run: pnpm exec electron-builder --win nsis portable --publish never
@@ -143,16 +66,17 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: 0.1.${{ github.run_number }}
-          UPSTREAM_COMMIT: ${{ needs.prepare.outputs.commit }}
+          RELEASE_VERSION: 0.2.${{ github.run_number }}
         run: |
           @"
-          Automated Windows build for DeepSeek Harness Desktop.
+          Windows desktop shell for the official ``@deepseek-ai/dsh`` npm release.
 
-          Upstream commit: ``$env:UPSTREAM_COMMIT``
+          Harness starts from the last verified local runtime. New npm releases
+          are downloaded in the background and activated with health-check rollback.
 
-          The official Harness source was installed and compiled successfully
-          before these desktop packages were created. Packages are unsigned.
+          Desktop commit: ``${{ github.sha }}``
+
+          Packages are unsigned.
           "@ | Set-Content -Encoding utf8 release-notes.md
 
           $assets = Get-ChildItem dist -File | Where-Object {
