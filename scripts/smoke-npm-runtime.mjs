@@ -112,11 +112,13 @@ function verifyTerminalRuntime() {
       terminal.kill()
       reject(new Error(`node-pty smoke test timed out\n${output}`))
     }, 15_000)
-    terminal.onData(data => {
+    const dataSubscription = terminal.onData(data => {
       output += data
     })
-    terminal.onExit(({ exitCode }) => {
+    const exitSubscription = terminal.onExit(({ exitCode }) => {
       clearTimeout(timeout)
+      dataSubscription.dispose()
+      exitSubscription.dispose()
       if (exitCode === 0 && output.includes(token)) resolve()
       else reject(new Error(`node-pty smoke test failed with code ${exitCode}\n${output}`))
     })
@@ -138,6 +140,7 @@ async function waitForHealth(url) {
 }
 
 let harness
+let smokeError
 try {
   writeFileSync(join(runtimePath, 'package.json'), `${JSON.stringify({
     name: 'dsh-npm-smoke',
@@ -165,6 +168,8 @@ try {
   harness = await startHarness(entrypoint)
   await waitForHealth(harness.url)
   process.stdout.write(`Harness npm runtime is healthy: ${harness.url}\n`)
+} catch (error) {
+  smokeError = error
 } finally {
   await killTree(harness?.child)
   try {
@@ -173,3 +178,9 @@ try {
     process.stderr.write(`Warning: could not remove smoke runtime ${runtimePath}: ${error.message}\n`)
   }
 }
+
+if (smokeError) {
+  process.stderr.write(`${smokeError.stack ?? smokeError.message}\n`)
+  process.exit(1)
+}
+process.exit(0)
